@@ -1,6 +1,7 @@
 \documentclass{article}
 \usepackage{amsmath, amssymb}
 \usepackage[retainorgcmds]{IEEEtrantools}
+\usepackage{algpseudocode}
 \usepackage{filecontents}
 \usepackage{hyperref}
 \author{Henry Milner}
@@ -144,6 +145,14 @@
   year={2011},
   publisher={ACM}
 }
+@inproceedings{chung2014distributed,
+  title={Distributed algorithms for the Lov{\'a}sz local lemma and graph coloring},
+  author={Chung, Kai-Min and Pettie, Seth and Su, Hsin-Hao},
+  booktitle={Proceedings of the 2014 ACM symposium on Principles of distributed computing},
+  pages={134--143},
+  year={2014},
+  organization={ACM}
+}
 @inproceedings{freer2010probabilistic,
   title={When are probabilistic programs probably computationally tractable?},
   author={Freer, Cameron E and Mansinghka, Vikash K and Roy, Daniel M},
@@ -188,19 +197,26 @@
 \begin{document}
 \maketitle
 
-For my project, I will study the algorithmic Lovasz Local Lemma (LLL).  I will begin with a survey of the literature on the subject.  This will cover the nonconstructive lemma due to Erdos and Lovasz \cite{erdos1975problems} (briefly, since it was covered in class), then the first algorithm by Beck \cite{beck1991algorithmic}, and finally the general algorithm and information-theoretic proof by Moser and Tardos \cite{moser2010constructive}.
+The algorithmic Lovasz Local Lemma (LLL) is a recent-developed class of randomized algorithms for solving certain easy instances of hard combinatorial problems.  The seminal paper in the field is by Moser and Tardos \cite{moser2010constructive} in 2010.  For many problems, LLL algorithms theoretically lend themselves well to parallelism, as demonstrated in more recent work \cite{chung2014distributed,haeupler2011new}.  However, we are aware of no published empirical tests of the efficiency of LLL algorithms in practice.  In our project, we will implement parallel LLL algorithms for graph coloring and k-SAT, and we will compare their performance on benchmarks against other algorithms.
 
-After the survey, I will (time permitting) explore two questions that motivate my interest in this subject:
+\subsection{A brief introduction to LLL algorithms}
+The basic setup for LLL algorithms is as follows: Let $\mathcal{A} = \{A_1, \cdots, A_m\} \in 2^m$ be a set of discrete variables (which we take to be binary for sake of exposition), and let $\mathcal{E} = \{E_1, \cdots, E_n\}$ be a set of functions $[K]^m \to \{\operatorname{true},\operatorname{false}\}$ mapping the variables to truth values.  The $E_i$ are called ``events,'' and $E_i$ is said to ``happen'' if it is true.  We would like to find an assignment of the variables so that none of the events happen.  For example, in k-SAT, the $A_i$ are the problem variables, and each $E_i$ is a clause involving $k$ variables.  The simplest version of the algorithm is \emph{extremely} simple:
 
-\subsection{Connections to MCMC Sampling}
-In a 2010 paper, Freer et al \cite{freer2010probabilistic} point out that Moser's algorithm is similar to MCMC sampling in probabilistic graphical models.  In the usual algorithmic LLL setup, we let $\mathcal{E} = \{E_1, \cdots, E_n\}$ be a set of events determined by marginally mutually independent random variables $\mathcal{A} = \{A_1, \cdots, A_m\}$.  We could think of this as a directed probabilistic graphical model (DPGM), with an arrow from each variable $A_i$ to the events $c(A_i)$ dependent on it.  A satisfying assignment is anything that has positive probability when we condition on none of the events happening.  Then Moser's algorithm repeatedly picks parent sets $\pi(E_j)$ that have probability $0$ under the current assignment and resamples them from their marginal distribution.
+\begin{algorithmic}
+\State Sample all the $A_i$ IID Bernoulli($1/2$).
+\While{Any of the $E_j$ happen}
+  \State Let $E_j$ be an arbitrary event that happens.
+  \State Sample each $A_i \in \{A_i: E_j\text{ depends on }A_i\}$ IID Bernoulli($1/2$).
+\EndWhile
+\end{algorithmic}
 
-This is close to a Metropolis-Hastings sampling scheme: the proposal distribution resamples all parents of an arbitrary event, and the proposal is rejected if the event already didn't happen under the previous assignment.  Moser's algorithm cannot actually be a proper Metropolis-Hastings algorithm, since the Markov chain produced when we run it eventually reaches an absorbing state.  Still, Srinivasan et al \cite{haeupler2011new} show that Moser's algorithm approximately samples from the ```conditional LLL''' distribution -- the joint distribution of the $A_i$ conditional on none of the events in $\mathcal{E}$ happening -- which is all that we want out of a sampling algorithm.
+Of course, the decision version of k-SAT is NP-hard, so we would not expect this algorithm to work for all instances.  Moser and Tardos \cite{moser2010constructive} prove that it runs in expected polynomial time when the when the events are not ``too dependent.''  Let $p$ be the maximum probability that any single event happens under a random assignment to all the variables.  Construct an undirected dependency graph for the events, in which there is an edge between $E_j$ and $E_k$ if they are statistically dependent under random assignment to the $A_i$.  In k-SAT, there is an edge between clauses $E_j$ and $E_k$ if they share any variable.  Let $d$ be the maximum degree of events in this graph.  Then the above algorithm finishes in expected polynomial time if $e p d < 1$, where $e$ is the base of the natural logarithm.
 
-I would like to investigate whether an algorithm like Moser's could perform fast sampling in PDGMs that satisfy an LLL-like condition.  The proof techniques in \cite{moser2010constructive} and \cite{haeupler2011new} seem quite different from those in the literature on probablistic inference.  For example, the LLL condition applies to graphs with very high treewidth (at least $k$ in the $k$-SAT problem), while exact inference in general graphs is exponentially hard in the treewidth\cite{wainwright2008graphical}.  I also want to see whether Moser's algorithm and proof can be modified to work when the events in $\mathcal{E}$ are merely dependent on the $A_i$, and not fixed deterministically by them.
+The dependency graph is useful for seeing an easy way to parallelize the simple LLL algorithm.  Notice that if independent events $E_j$ and $E_k$ happen under the current assignment to $\mathcal{A}$, and event $E_j$'s variables are chosen for resampling, then (by independence) $E_k$ will still happen after the resampling, so the next iteration could resample it.  This means we can resample variables depended-on by any independent set of events that currently happen, and this resampling can be done in parallel.  Chung et al \cite{chung2014distributed} and Srinivasan et al \cite{haeupler2011new} give alternative parallel algorithms that are less obviously correct, but which can be run on distributed computers.
 
-\subsection{Practicality}
-Is Moser's algorithm useful in practice?  It seems that common local search methods for problems like $k$-SAT and graph coloring are similar to Moser's algorithm, but not exactly the same.  Since Moser's algorithm is so simple (and so similar to algorithms like Papadimitriou's algorithm for $2$-SAT \cite{papadimitriou1991selecting}), it seems likely that practitioners would have tried it heuristically.  But I have not (so far) found any studies of this; perhaps this idea has not yet migrated out of the theory community.  So I would like to write a reasonably performant implementation of the parallel version of Moser's algorithm, and then compare it on CSP benchmarks with off-the-shelf solvers and perhaps with an SDP relaxation \cite{steurer2010fast} using an off-the-shelf SDP solver like SeDuMi \cite{polik2007sedumi}.
+\subsection{Project goals}
+
+% Is Moser's algorithm useful in practice?  It seems that common local search methods for problems like $k$-SAT and graph coloring are similar to Moser's algorithm, but not exactly the same.  Since Moser's algorithm is so simple (and so similar to algorithms like Papadimitriou's algorithm for $2$-SAT \cite{papadimitriou1991selecting}), it seems likely that practitioners would have tried it heuristically.  But I have not (so far) found any studies of this; perhaps this idea has not yet migrated out of the theory community.  So I would like to write a reasonably performant implementation of the parallel version of Moser's algorithm, and then compare it on CSP benchmarks with off-the-shelf solvers and perhaps with an SDP relaxation \cite{steurer2010fast} using an off-the-shelf SDP solver like SeDuMi \cite{polik2007sedumi}.
 
 \bibliographystyle{plain}
 \bibliography{\jobname}
